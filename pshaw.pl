@@ -8,6 +8,10 @@ use POSIX;
 use Env;          #Import all of the user's environment variables as Perl variables
 use Data::Dumper;
 
+#use lib 'include';
+
+require 'sys/syscall.ph';
+
 sub processBuiltin {
    my $function = shift;
    my @args = @_;
@@ -16,6 +20,15 @@ sub processBuiltin {
 
    if ($function eq "exit") {
       exit join(" ", @args);
+   }
+
+   if ($function eq "print") {
+      eval { $function." ".join(" ", @args) };
+      return 1;
+   }
+
+   if ($function eq "cd") {
+      chdir $args[0];
       return 1;
    }
 
@@ -63,15 +76,32 @@ while ($inputstr = <>) {
 
       # Make sure the file really exists
       unless (stat($input[0])) {
-         printf STDERR "Command not found: %s", $input[0];
+         printf STDERR "Command not found: %s\n", $input[0];
+         prompt;
          next;
       }
       # Build up argv and argc
       # execve the command
       
-      POSIX::execve(@input);
-      #printf STDERR "I'd love to be able to %s someday.\n", join(" ", @input);
+      #my $executable = shift @input;
+      #print Dumper(@input);
+      
+      my $pid = fork();
+      if ($pid) {
+         # parent
+         wait;
+         print "Child returned $?\n";
+      } elsif ($pid == 0) {
+         # child
+         exec { $input[0] } @input;
+      } else {
+         printf STDERR "Failed to fork child: %s", $input[0];
+      }
    }
 
    prompt;
 }
+
+#use Inline C => <<'END_OF_C_CODE';
+#
+#void call_execve(SV* filename, 
