@@ -90,7 +90,6 @@ while ($inputstr = <>) {
       if ($pid) {
          # parent
          wait;
-         print "Child returned $?\n";
       } elsif ($pid == 0) {
          # child
          exec { $input[0] } @input;
