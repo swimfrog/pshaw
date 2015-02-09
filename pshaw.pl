@@ -35,6 +35,50 @@ sub processBuiltin {
    return 0;
 }
 
+sub processRedirects {
+   my @input = @_;
+
+   #FIXME: This won't work if there are spaces around the redirect operator.
+
+   #print Dumper(@input);
+
+   for (my $i=0; $i <= scalar(@input); $i++) {
+      print STDERR $input[$i]."\n";
+
+      # Scan for any redirect operators
+      if ($input[$i] =~ m/[<>]+&*/) {
+         #print STDERR "Found a redirect: $input[$i]\n";
+         # Parse the redirect
+         $input[$i] =~ m/(&*)(.*)([<>]+)(&*)(.*)/;
+         my $srcmode = $1;
+         my $src = $2;
+         my $op = $3;
+         my $dstmode = $4;
+         my $dst = $5;
+
+         $src = 1 if ((! $src) && ($op eq ">"));
+         $src = 0 if ((! $src) && ($op eq "<"));
+
+         if ($src == 0) {
+            close(STDIN);
+            open(STDIN, $op.$dstmode, $dst);
+         } elsif ($src == 1) {
+            close(STDOUT);
+            open(STDOUT, $op.$dstmode, $dst);
+         } elsif ($src == 2) {
+            close(STDERR);
+            open(STDERR, $op.$dstmode, $dst);
+         }
+
+         splice(@input, $i, 1); # Delete this element from the array
+         $i--;
+      }
+   }
+
+   #print Dumper(@input);
+   return @input;
+}
+
 sub prompt {
    # Print a prompt
    print "pshaw> \$ ";
@@ -53,54 +97,58 @@ while ($inputstr = <>) {
       next;
    }
 
+
    # If the command is a builtin, then process it.
    unless ( processBuiltin( @input ) ) {
       # The command was not a builtin. Start doing the fun stuff.
 
-      # Locate the file on the disk for the executable
-      if ( $input[0] =~ m#^/# ) {
-         # The command starts with a /, so the path is absolute
-      } elsif ( $input[0] =~ m#/# ) {
-         # The command doesn't begin with /, but contains /, so the path is relative
-         # Make it absolute.
-         $input[0] = $PWD . "/" . $input[0];
-      } else {
-         # Search the PATH for the command
-         foreach my $pathel (split(":", $PATH)) {
-            if (stat($pathel . "/" . $input[0])) {
-               $input[0] = $pathel . "/" . $input[0];
-               break;
-            }
-         }
-      }
-
-      # Make sure the file really exists
-      unless (stat($input[0])) {
-         printf STDERR "Command not found: %s\n", $input[0];
-         prompt;
-         next;
-      }
-      # Build up argv and argc
-      # execve the command
-      
-      #my $executable = shift @input;
-      #print Dumper(@input);
-      
       my $pid = fork();
       if ($pid) {
          # parent
          wait;
       } elsif ($pid == 0) {
          # child
+
+         # Handle redirection - Search the input for redirection operators, handle them, then delete them from the input.
+         @input = processRedirects( @input );
+
+         # Locate the file on the disk for the executable
+         if ( $input[0] =~ m#^/# ) {
+            # The command starts with a /, so the path is absolute
+         } elsif ( $input[0] =~ m#/# ) {
+            # The command doesn't begin with /, but contains /, so the path is relative
+            # Make it absolute.
+            $input[0] = $PWD . "/" . $input[0];
+         } else {
+            # Search the PATH for the command
+            foreach my $pathel (split(":", $PATH)) {
+               if (stat($pathel . "/" . $input[0])) {
+                  $input[0] = $pathel . "/" . $input[0];
+                  break;
+               }
+            }
+         }
+   
+         # Make sure the file really exists
+         unless (stat($input[0])) {
+            printf STDERR "Command not found: %s\n", $input[0];
+            prompt;
+            next;
+         }
+
          exec { $input[0] } @input;
+
       } else {
          printf STDERR "Failed to fork child: %s", $input[0];
       }
    }
 
+   select STDOUT;
+   select STDIN;
+   select STDERR;
+
    prompt;
 }
 
-#use Inline C => <<'END_OF_C_CODE';
-#
-#void call_execve(SV* filename, 
+# Just in case any of the above get skipped, this wait ensures that we don't intentionally create any zombies.
+wait;
